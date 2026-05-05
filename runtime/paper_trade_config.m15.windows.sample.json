@@ -1,0 +1,22 @@
+{
+  "telegram": {
+    "bot_token": "YOUR_TELEGRAM_BOT_TOKEN",
+    "chat_id": "YOUR_TELEGRAM_CHAT_ID",
+    "insecure_ssl": false
+  },
+  "mt5": {
+    "symbol": "XAUUSD",
+    "timeframe": "M15",
+    "bars": 3000,
+    "terminal_path": "C:/Program Files/MetaTrader 5/terminal64.exe",
+    "login": 12345678,
+    "password": "YOUR_MT5_PASSWORD",
+    "server": "YOUR_BROKER_SERVER"
+  },
+  "risk": {
+    "risk_per_trade": 0.01,
+    "max_drawdown_pct": 15.0,
+    "max_consecutive_losses": 999,
+    "min_balance": 1000.0
+  }
+}

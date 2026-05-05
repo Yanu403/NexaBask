@@ -1,0 +1,11 @@
+*.jsonl
+*.pid
+paper_trade_state.json
+paper_trade_config.json
+mt5_snapshot.csv
+mt5_execution_state.json
+mt5_execution_loop_state.json
+session_basket_demo_config.json
+session_basket_states/
+session_basket_journals/
+session_basket_demo_loop.jsonl

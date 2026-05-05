@@ -1,0 +1,53 @@
+{
+  "active_branches": ["eurusd_sweep", "gbpusd_orb", "eurusd_orb", "xauusd_continuation"],
+  "telegram": {
+    "bot_token": "YOUR_TELEGRAM_BOT_TOKEN",
+    "chat_id": "YOUR_TELEGRAM_CHAT_ID",
+    "insecure_ssl": false
+  },
+  "mt5": {
+    "timeframe": "M5",
+    "bars": 2500,
+    "terminal_path": "C:/Program Files/MetaTrader 5/terminal64.exe",
+    "login": 12345678,
+    "password": "YOUR_MT5_PASSWORD",
+    "server": "YOUR_BROKER_SERVER"
+  },
+  "symbols": {
+    "EURUSD": {
+      "symbol": "EURUSDm",
+      "timeframe": "M5",
+      "bars": 2500
+    },
+    "GBPUSD": {
+      "symbol": "GBPUSDm",
+      "timeframe": "M5",
+      "bars": 2500
+    },
+    "XAUUSD": {
+      "symbol": "XAUUSDm",
+      "timeframe": "M5",
+      "bars": 2500
+    }
+  },
+  "risk": {
+    "risk_per_trade": 0.005,
+    "max_drawdown_pct": 20.0,
+    "max_consecutive_losses": 6,
+    "min_balance": 1000.0,
+    "min_risk_distance_pips": 3.0,
+    "max_position_lots": 10.0
+  },
+  "spread_limits_pips": {
+    "EURUSD": 4.0,
+    "GBPUSD": 3.0,
+    "XAUUSD": 10.0
+  },
+  "execution": {
+    "deviation": 20,
+    "magic": 35042026,
+    "comment": "xau_bot_v1",
+    "close_opposite_first": true,
+    "sltp_tolerance_points": 0.05
+  }
+}

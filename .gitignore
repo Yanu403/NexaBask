@@ -1,0 +1,67 @@
+# ═══════════════════════════════════════════════════════════════════
+# XAUUSD Trading Bot — .gitignore
+# ═══════════════════════════════════════════════════════════════════
+
+# ── SENSITIVE: Never push real credentials ─────────────────────────
+# ALL non-sample runtime configs contain real passwords/tokens
+runtime/*.json
+!runtime/*.sample.json
+
+# ── STATE & JOURNALS: Contains trade history & PII ────────────────
+runtime/session_basket_states/
+runtime/session_basket_journals/
+runtime/paper_states/
+runtime/paper_journals/
+runtime/*.jsonl
+runtime/*.log
+
+# ── PYTHON ─────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# ── VENV ───────────────────────────────────────────────────────────
+.venv/
+venv/
+ENV/
+env/
+
+# ── IDE ────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── OS ─────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── DATA: Broker CSV data (large, proprietary) ────────────────────
+# HFM data lives in /root/data/dataset_hfm/ (outside repo)
+# But old experiment CSVs inside project should also be excluded
+data/
+
+
+# ── ARCHIVED: Legacy code kept locally but not in repo ────────────
+strategies/_archive_legacy/
+_archive_legacy_runners/
+src/xauusd_trading/strategies/_archive_legacy/
+research/archive/
+
+# ── ROOT-LEVEL DUPLICATES (old structure, now in src/) ────────────
+/execution/
+/risk/
+/reports/
+
+# ── ENV FILES: Never push secrets ──────────────────────────────────
+.env
+.env.*
+*.env
