@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -7,6 +8,11 @@ from xauusd_trading.data.mt5 import MT5Config, initialize_mt5, shutdown_mt5
 from xauusd_trading.models.live import BrokerPosition, ExecutionDecision, OrderIntent, PositionManagementPlan, PositionSyncPlan
 from xauusd_trading.models.trading import TradeSignal
 from xauusd_trading.risk.manager import RiskConfig, RiskManager
+
+logger = logging.getLogger(__name__)
+
+# MT5 return codes that indicate successful order execution
+_MT5_SUCCESS_RETCODES = frozenset({10008, 10009})
 
 
 @dataclass(slots=True)
@@ -57,16 +63,33 @@ class MT5ExecutionAdapter:
             shutdown_mt5(mt5)
 
     def build_intent(self, signal: TradeSignal, *, account_balance: float, risk_config: RiskConfig) -> OrderIntent:
-        risk_manager = RiskManager(initial_balance=account_balance, config=risk_config)
+        # BUG 3 fix: respect per-branch risk_per_trade from signal metadata
+        risk_per_trade_override = signal.metadata.get('risk_per_trade')
+        if isinstance(risk_per_trade_override, (int, float)) and float(risk_per_trade_override) > 0:
+            effective_risk_config = RiskConfig(
+                risk_per_trade=float(risk_per_trade_override),
+                max_drawdown_pct=risk_config.max_drawdown_pct,
+                max_consecutive_losses=risk_config.max_consecutive_losses,
+                min_balance=risk_config.min_balance,
+                max_position_lots=risk_config.max_position_lots,
+                lot_size=risk_config.lot_size,
+                min_risk_distance_pips=risk_config.min_risk_distance_pips,
+            )
+        else:
+            effective_risk_config = risk_config
+
+        risk_manager = RiskManager(initial_balance=account_balance, config=effective_risk_config)
         pip_size = float(signal.metadata.get('pip_size', 0.0001))
+        lot_size = float(signal.metadata.get('lot_size', risk_config.lot_size))
         _, raw_units = risk_manager.size_position(
             entry_price=signal.entry_price,
             stop_loss=signal.stop_loss,
             pip_size=pip_size,
+            lot_size=lot_size,
         )
-        # size_position() returns CONTRACT UNITS (e.g. 41,096), not lots.
+        # size_position() returns CONTRACT UNITS (e.g. 4,100), not lots.
         # Must convert to lots: lots = units / lot_size
-        raw_lots = raw_units / risk_config.lot_size
+        raw_lots = raw_units / lot_size
         volume = self._normalize_volume(raw_lots)
         return OrderIntent(
             symbol=self.mt5_config.symbol,
@@ -158,10 +181,14 @@ class MT5ExecutionAdapter:
             result = mt5.order_send(request)
             if result is None:
                 raise RuntimeError(f'MT5 order_send returned None: {mt5.last_error()}')
+            retcode = int(getattr(result, 'retcode', -1))
+            sent = retcode in _MT5_SUCCESS_RETCODES
+            if not sent:
+                logger.warning('Order rejected by broker: retcode=%d comment=%s', retcode, getattr(result, 'comment', ''))
             return {
-                'sent': True,
+                'sent': sent,
                 'mode': 'LIVE',
-                'retcode': int(getattr(result, 'retcode', -1)),
+                'retcode': retcode,
                 'order': int(getattr(result, 'order', 0)),
                 'deal': int(getattr(result, 'deal', 0)),
                 'price': price,
@@ -295,10 +322,14 @@ class MT5ExecutionAdapter:
             result = mt5.order_send(request)
             if result is None:
                 raise RuntimeError(f'MT5 order_send SLTP returned None: {mt5.last_error()}')
+            retcode = int(getattr(result, 'retcode', -1))
+            sent = retcode in _MT5_SUCCESS_RETCODES
+            if not sent:
+                logger.warning('SLTP modification rejected: retcode=%d comment=%s', retcode, getattr(result, 'comment', ''))
             return {
-                'sent': True,
+                'sent': sent,
                 'mode': 'LIVE',
-                'retcode': int(getattr(result, 'retcode', -1)),
+                'retcode': retcode,
                 'order': int(getattr(result, 'order', 0)),
                 'request': request,
             }
@@ -336,11 +367,15 @@ class MT5ExecutionAdapter:
                 'type_filling': getattr(mt5, 'ORDER_FILLING_FOK', 0),
             }
             result = mt5.order_send(request)
+            retcode = int(getattr(result, 'retcode', -1)) if result is not None else -1
+            sent = result is not None and retcode in _MT5_SUCCESS_RETCODES
+            if result is not None and not sent:
+                logger.warning('Partial close rejected: retcode=%d ticket=%d comment=%s', retcode, ticket, getattr(result, 'comment', ''))
             return {
-                'sent': result is not None,
+                'sent': sent,
                 'mode': 'LIVE',
                 'ticket': ticket,
-                'retcode': int(getattr(result, 'retcode', -1)) if result is not None else -1,
+                'retcode': retcode,
                 'request': request,
             }
         finally:
@@ -395,10 +430,14 @@ class MT5ExecutionAdapter:
                     'type_filling': getattr(mt5, 'ORDER_FILLING_FOK', 0),
                 }
                 result = mt5.order_send(request)
+                retcode = int(getattr(result, 'retcode', -1)) if result is not None else -1
+                sent = result is not None and retcode in _MT5_SUCCESS_RETCODES
+                if result is not None and not sent:
+                    logger.warning('Position close rejected: retcode=%d ticket=%d comment=%s', retcode, ticket, getattr(result, 'comment', ''))
                 results.append({
-                    'sent': result is not None,
+                    'sent': sent,
                     'ticket': ticket,
-                    'retcode': int(getattr(result, 'retcode', -1)) if result is not None else -1,
+                    'retcode': retcode,
                     'request': request,
                 })
             return results

@@ -10,7 +10,7 @@ class RiskConfig:
     max_consecutive_losses: int = 6
     min_balance: float = 1_000.0
     max_position_lots: float = 10.0
-    lot_size: float = 100_000.0
+    lot_size: float = 100.0  # XAUUSD: 1 lot = 100 oz; override to 100_000 for forex pairs
     min_risk_distance_pips: float = 5.0
 
 
@@ -43,7 +43,17 @@ class RiskManager:
 
         return True
 
-    def size_position(self, *, entry_price: float, stop_loss: float, pip_size: float = 0.0001) -> tuple[float, float]:
+    def size_position(self, *, entry_price: float, stop_loss: float, pip_size: float = 0.0001, lot_size: float | None = None) -> tuple[float, float]:
+        """Compute position size in CONTRACT UNITS (not lots).
+
+        Returns (risk_amount, position_size) where position_size is in units
+        of the base currency (e.g. 100,000 units = 1.0 lot for lot_size=100,000).
+        Callers that need LOTS must divide by the effective lot_size.
+
+        Args:
+            lot_size: Override lot_size for the max position cap. Falls back to
+                config.lot_size. Use signal.metadata['lot_size'] for per-symbol sizing.
+        """
         stop_distance = abs(entry_price - stop_loss)
         risk_amount = self.balance * self.config.risk_per_trade
 
@@ -54,8 +64,9 @@ class RiskManager:
 
         position_size = risk_amount / stop_distance if stop_distance > 0 else 0.0
 
-        # Cap at max_position_lots
-        max_units = self.config.max_position_lots * self.config.lot_size
+        # Cap at max_position_lots (use per-symbol lot_size if provided)
+        effective_lot_size = lot_size if lot_size is not None else self.config.lot_size
+        max_units = self.config.max_position_lots * effective_lot_size
         position_size = min(position_size, max_units)
 
         return risk_amount, position_size

@@ -73,6 +73,7 @@ BRANCHES = {
         "strategy_factory": lambda: SessionContinuationFVGStrategy(
             name="xauusd_continuation",
             pip_size=0.01,
+            spread_points_per_pip=100.0,
             max_spread_pips=10.0,
             min_fvg_pips=0.03,
             impulse_lookback_bars=48,

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,6 +14,8 @@ from xauusd_trading.data.loader import load_ohlcv_csv
 from xauusd_trading.models.paper import PaperPosition, PaperState
 from xauusd_trading.models.trading import TradeSignal
 from xauusd_trading.risk.manager import RiskConfig, RiskManager
+
+logger = logging.getLogger(__name__)
 
 
 def _utc_now() -> str:
@@ -30,7 +34,30 @@ def load_paper_state(path: str | Path, *, data_path: str, initial_balance: float
             open_positions=[],
         )
 
-    payload = json.loads(state_path.read_text())
+    try:
+        payload = json.loads(state_path.read_text())
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning('Corrupted paper state file %s (%s); resetting to defaults', state_path, exc)
+        return PaperState(
+            generated_at=_utc_now(),
+            data_path=data_path,
+            balance=initial_balance,
+            peak_balance=initial_balance,
+            closed_trades=0,
+            open_positions=[],
+        )
+
+    if not isinstance(payload, dict):
+        logger.warning('Paper state file %s does not contain a dict; resetting to defaults', state_path)
+        return PaperState(
+            generated_at=_utc_now(),
+            data_path=data_path,
+            balance=initial_balance,
+            peak_balance=initial_balance,
+            closed_trades=0,
+            open_positions=[],
+        )
+
     return PaperState(
         generated_at=payload.get('generated_at', _utc_now()),
         data_path=payload.get('data_path', data_path),
@@ -46,7 +73,9 @@ def save_paper_state(state: PaperState, path: str | Path) -> Path:
     state_path = Path(path)
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state.generated_at = _utc_now()
-    state_path.write_text(json.dumps(state.to_dict(), indent=2))
+    tmp_path = state_path.with_suffix('.tmp')
+    tmp_path.write_text(json.dumps(state.to_dict(), indent=2))
+    os.replace(str(tmp_path), str(state_path))
     return state_path
 
 
@@ -76,13 +105,27 @@ class PaperTrader:
         return self.state
 
     def _open_position(self, signal: TradeSignal, journal_path: str | Path) -> None:
+        pip_size = float(signal.metadata.get('pip_size', 0.0001))
+        lot_size = float(signal.metadata.get('lot_size', self.risk_manager.config.lot_size))
         risk_per_trade_override = signal.metadata.get('risk_per_trade')
         if isinstance(risk_per_trade_override, (int, float)) and float(risk_per_trade_override) > 0:
             stop_distance = abs(signal.entry_price - signal.stop_loss)
+            # Guard: skip if stop too tight (same check as size_position())
+            stop_pips = stop_distance / pip_size
+            if stop_pips < self.risk_manager.config.min_risk_distance_pips:
+                self.events.append({'type': 'SKIP', 'reason': 'STOP_TOO_TIGHT', 'side': signal.side, 'pip_size': pip_size})
+                return
             risk_amount = self.risk_manager.balance * float(risk_per_trade_override)
             position_size = risk_amount / stop_distance if stop_distance > 0 else 0.0
+            # Cap at max_position_lots (same guard as size_position())
+            max_units = self.risk_manager.config.max_position_lots * lot_size
+            position_size = min(position_size, max_units)
         else:
-            risk_amount, position_size = self.risk_manager.size_position(entry_price=signal.entry_price, stop_loss=signal.stop_loss)
+            risk_amount, position_size = self.risk_manager.size_position(
+                entry_price=signal.entry_price,
+                stop_loss=signal.stop_loss,
+                pip_size=pip_size,
+            )
         position = PaperPosition(
             position_id=uuid4().hex[:12],
             strategy=str(signal.metadata.get('strategy', 'unknown')),

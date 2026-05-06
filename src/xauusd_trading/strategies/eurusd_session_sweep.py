@@ -254,6 +254,7 @@ class EURUSDSessionSweepFVGStrategy(Strategy):
                 'rr_target': self.rr_target,
                 'pip_size': self.pip_size,
                 'spread_points_per_pip': self.spread_points_per_pip,
+                'lot_size': 100_000,  # EURUSD: 1 lot = 100,000 units
             },
         )
 

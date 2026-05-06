@@ -170,6 +170,7 @@ class SessionContinuationFVGStrategy(Strategy):
                 'rr_target': self.rr_target,
                 'pip_size': self.pip_size,
                 'spread_points_per_pip': self.spread_points_per_pip,
+                'lot_size': 100,  # XAUUSD: 1 lot = 100 oz
             },
         )
 

@@ -45,8 +45,22 @@ class OrderIntent:
             raise ValueError(f"side must be 'LONG' or 'SHORT', got {self.side!r}")
         if self.volume <= 0:
             raise ValueError(f"volume must be > 0, got {self.volume}")
+        if self.entry_price <= 0:
+            raise ValueError(f"entry_price must be > 0, got {self.entry_price}")
         for _name in ("volume", "entry_price", "stop_loss", "take_profit"):
             _check_finite(getattr(self, _name), _name)
+        if self.side == "LONG":
+            if not (self.stop_loss < self.entry_price < self.take_profit):
+                raise ValueError(
+                    f"LONG requires stop_loss < entry_price < take_profit, "
+                    f"got SL={self.stop_loss}, entry={self.entry_price}, TP={self.take_profit}"
+                )
+        else:  # SHORT
+            if not (self.stop_loss > self.entry_price > self.take_profit):
+                raise ValueError(
+                    f"SHORT requires stop_loss > entry_price > take_profit, "
+                    f"got SL={self.stop_loss}, entry={self.entry_price}, TP={self.take_profit}"
+                )
         if len(self.comment) > 31:
             raise ValueError(
                 f"MT5 comment must be ≤ 31 chars, got {len(self.comment)}: {self.comment!r}"
