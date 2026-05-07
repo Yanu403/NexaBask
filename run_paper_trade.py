@@ -189,16 +189,35 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.loop:
-        print(f"Starting paper-trade loop (every {args.interval}s). Ctrl+C to stop.")
+        from xauusd_trading.execution.terminal_ui import BANNER
+        print(BANNER)
+        print(f"  Loop: every {args.interval}s  │  Press Ctrl+C to stop\n")
         try:
             while True:
                 result = run_once(args)
-                now = result["scan_time"]
+                now = result["scan_time"][:19]
                 sig_count = result["signals_found"]
                 acc_count = result["accepted_signals"]
-                print(f"[{now}] Scan complete: {sig_count} signals, {acc_count} accepted")
-                for sig in result["accepted"]:
-                    print(f"  ✅ {sig['branch_id']}: {sig['side']} {sig['symbol']} @ {sig['entry_price']:.5f} SL={sig['stop_loss']:.5f} TP={sig['take_profit']:.5f} R:R={sig['rr_ratio']}")
+
+                if args.json:
+                    print(json.dumps(result, indent=2, default=str))
+                else:
+                    from xauusd_trading.execution.terminal_ui import format_heartbeat
+                    branch_debugs = []
+                    for bid, info in result["results"].items():
+                        bd = {"branch_id": bid, "symbol": info.get("symbol", "?"),
+                              "reason_code": info.get("debug_reason", "?"),
+                              "has_signal": info.get("has_signal", False)}
+                        if info.get("has_signal"):
+                            bd["side"] = info.get("side")
+                            bd["entry_price"] = info.get("entry_price")
+                        branch_debugs.append(bd)
+                    print(format_heartbeat(
+                        iteration=0, timestamp=now, mode="PAPER",
+                        accepted=acc_count, rejected=sig_count - acc_count,
+                        branch_debugs=branch_debugs,
+                    ))
+
                 time.sleep(args.interval)
         except KeyboardInterrupt:
             print("\nStopped by user.")
@@ -208,22 +227,8 @@ def main() -> int:
     if args.json:
         print(json.dumps(result, indent=2, default=str))
     else:
-        print(f"\n{'='*60}")
-        print(f"PAPER TRADE SCAN — {result['scan_time']}")
-        print(f"{'='*60}")
-        print(f"Branches: {result['total_branches']} | Signals: {result['signals_found']} | Accepted: {result['accepted_signals']}")
-        print()
-        for branch_id, info in result["results"].items():
-            status = "✅ SIGNAL" if info.get("has_signal") else f"❌ {info.get('debug_reason', 'NO_DATA')}"
-            print(f"  {branch_id:25s} {status:20s} | {info.get('symbol', '?')} | bars={info.get('bars', '?')} | reason={info.get('debug_reason', '?')}")
-        print()
-        if result["accepted"]:
-            print("ACCEPTED SIGNALS:")
-            for sig in result["accepted"]:
-                print(f"  ✅ {sig['branch_id']}: {sig['side']} {sig['symbol']} @ {sig['entry_price']:.5f}")
-                print(f"     SL={sig['stop_loss']:.5f} TP={sig['take_profit']:.5f} R:R={sig['rr_ratio']} risk={sig['risk_pips']}pips")
-        else:
-            print("No signals accepted at this time.")
+        from xauusd_trading.execution.terminal_ui import format_paper_scan
+        print(format_paper_scan(result))
 
     return 0
 

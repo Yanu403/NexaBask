@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""Periodic MT5 demo basket scheduler for session portfolio v1.
+
+Outputs a beautiful terminal dashboard instead of raw JSON.
+Use --json for machine-readable output.
+"""
 from __future__ import annotations
 
 import argparse
@@ -13,6 +18,11 @@ sys.path.insert(0, str(PROJECT_ROOT / 'src'))
 
 from run_session_basket_demo_mt5 import build_parser as build_single_parser
 from run_session_basket_demo_mt5 import run_once
+from xauusd_trading.execution.terminal_ui import (
+    BANNER,
+    format_heartbeat,
+    format_signal_event,
+)
 
 
 def utc_now() -> str:
@@ -43,6 +53,12 @@ def main() -> int:
     args = build_parser().parse_args()
     iteration = 0
 
+    # Startup banner
+    if not args.json:
+        print(BANNER)
+        print(f"  Loop: every {args.interval_seconds}s  │  Press Ctrl+C to stop")
+        print()
+
     while True:
         iteration += 1
         payload = run_once(args)
@@ -52,6 +68,18 @@ def main() -> int:
         accepted_count = len(payload.get('accepted_signals', []))
         rejected_count = len(payload.get('rejected_signals', []))
         telegram_sent = int(payload.get('telegram_alerts_sent', 0))
+        branch_debugs = payload.get('branch_debugs', [])
+
+        # Extract balance info from first symbol that has it
+        balance = None
+        peak_balance = None
+        closed_trades = None
+        for sym, info in per_symbol.items():
+            if info.get('balance') is not None:
+                balance = info.get('balance')
+                peak_balance = info.get('peak_balance')
+                closed_trades = info.get('closed_trades', 0)
+                break
 
         heartbeat = {
             'timestamp': utc_now(),
@@ -77,11 +105,28 @@ def main() -> int:
         if args.json:
             print(json.dumps({'heartbeat': heartbeat, 'payload': payload}, indent=2))
         else:
-            print(
-                f"[{heartbeat['timestamp']}] iter={iteration} "
-                f"accepted={accepted_count} rejected={rejected_count} open={open_positions} "
-                f"events={event_count} telegram={telegram_sent} debug={heartbeat['debug_summary']}"
-            )
+            # Beautiful dashboard output
+            print(format_heartbeat(
+                iteration=iteration,
+                timestamp=heartbeat['timestamp'],
+                mode='DEMO',
+                accepted=accepted_count,
+                rejected=rejected_count,
+                open_positions=open_positions,
+                telegram_sent=telegram_sent,
+                debug_summary=heartbeat['debug_summary'],
+                branch_debugs=branch_debugs,
+                balance=balance,
+                peak_balance=peak_balance,
+                closed_trades=closed_trades,
+            ))
+
+            # Show events (trades opened/closed) with nice formatting
+            for sym, info in per_symbol.items():
+                for event in info.get('events', []):
+                    print(format_signal_event(event))
+
+            print()  # blank line between iterations
 
         if args.max_iterations and iteration >= args.max_iterations:
             break

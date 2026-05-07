@@ -401,7 +401,11 @@ def run_once(args: argparse.Namespace) -> dict:
 def main() -> int:
     args = build_parser().parse_args()
     payload = run_once(args)
-    print(json.dumps(payload, indent=2))
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        from xauusd_trading.execution.terminal_ui import format_execution_summary
+        print(format_execution_summary(payload))
     return 0
 
 

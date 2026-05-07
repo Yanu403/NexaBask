@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""Periodic MT5 execution scheduler for session basket portfolio.
+
+Outputs a beautiful terminal dashboard instead of raw JSON.
+Use --json for machine-readable output.
+"""
 from __future__ import annotations
 
 import argparse
@@ -19,11 +24,17 @@ def _signal_handler(signum, frame):
     _shutdown = True
     logger.info("Received signal %s – setting shutdown flag", signum)
 
+
 PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(PROJECT_ROOT / 'src'))
 
 from run_session_basket_execution_mt5 import build_parser as build_single_parser
 from run_session_basket_execution_mt5 import run_once
+from xauusd_trading.execution.terminal_ui import (
+    BANNER,
+    format_heartbeat,
+    format_signal_event,
+)
 
 
 def utc_now() -> str:
@@ -56,6 +67,13 @@ def main() -> int:
     signal.signal(signal.SIGINT, _signal_handler)
     iteration = 0
 
+    # Startup banner
+    if not args.json:
+        live_mode = "🔴 LIVE" if args.allow_live_send else "🔵 DRY-RUN"
+        print(BANNER)
+        print(f"  Mode: {live_mode}  │  Loop: every {args.interval_seconds}s  │  Press Ctrl+C to stop")
+        print()
+
     while not _shutdown:
         iteration += 1
         try:
@@ -64,12 +82,25 @@ def main() -> int:
             logger.exception("run_once failed on iteration %d – continuing loop", iteration)
             time.sleep(max(args.interval_seconds, 1))
             continue
+
         per_symbol = payload.get('per_symbol', {})
         decision_map = {symbol: item.get('decision', {}).get('action') for symbol, item in per_symbol.items()}
         live_actions = sum(1 for action in decision_map.values() if action and action != 'HOLD')
         accepted_count = len(payload.get('accepted_signals', []))
         rejected_count = len(payload.get('rejected_signals', []))
         telegram_sent = int(payload.get('telegram_alerts_sent', 0))
+        branch_debugs = payload.get('branch_debugs', [])
+
+        # Build symbol info for heartbeat
+        symbols_info = {}
+        for symbol, item in per_symbol.items():
+            decision = item.get('decision', {})
+            symbols_info[symbol] = {
+                'action': decision.get('action'),
+                'reason': decision.get('reason'),
+                'latest_bar_time': item.get('latest_bar_time'),
+                'positions': len(item.get('broker_positions', [])),
+            }
 
         heartbeat = {
             'timestamp': utc_now(),
@@ -80,15 +111,7 @@ def main() -> int:
             'live_actions': live_actions,
             'telegram_alerts_sent': telegram_sent,
             'debug_summary': payload.get('debug_summary', 'none'),
-            'symbols': {
-                symbol: {
-                    'action': item.get('decision', {}).get('action'),
-                    'reason': item.get('decision', {}).get('reason'),
-                    'latest_bar_time': item.get('latest_bar_time'),
-                    'positions': len(item.get('broker_positions', [])),
-                }
-                for symbol, item in per_symbol.items()
-            },
+            'symbols': symbols_info,
         }
 
         append_heartbeat(args.heartbeat_log, heartbeat)
@@ -96,11 +119,29 @@ def main() -> int:
         if args.json:
             print(json.dumps({'heartbeat': heartbeat, 'payload': payload}, indent=2))
         else:
-            print(
-                f"[{heartbeat['timestamp']}] iter={iteration} mode={heartbeat['mode']} "
-                f"accepted={accepted_count} rejected={rejected_count} actions={live_actions} "
-                f"telegram={telegram_sent} debug={heartbeat['debug_summary']}"
-            )
+            # Beautiful dashboard output
+            open_pos = sum(v.get('positions', 0) for v in symbols_info.values())
+            print(format_heartbeat(
+                iteration=iteration,
+                timestamp=heartbeat['timestamp'],
+                mode=payload.get('mode', 'DRY_RUN'),
+                accepted=accepted_count,
+                rejected=rejected_count,
+                open_positions=open_pos,
+                live_actions=live_actions,
+                telegram_sent=telegram_sent,
+                debug_summary=heartbeat['debug_summary'],
+                symbols=symbols_info,
+                branch_debugs=branch_debugs,
+            ))
+
+            # Show decision events with nice formatting
+            for symbol, item in per_symbol.items():
+                decision = item.get('decision', {})
+                if decision.get('action') != 'HOLD':
+                    print(format_signal_event(decision))
+
+            print()  # blank line between iterations
 
         if args.max_iterations and iteration >= args.max_iterations:
             break
