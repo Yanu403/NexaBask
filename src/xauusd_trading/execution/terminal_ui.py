@@ -2,26 +2,81 @@
 
 Provides ANSI-colored, structured dashboard output for loop heartbeat,
 signal events, and trade decisions — replacing raw JSON dumps.
+
+Windows support: auto-enables Virtual Terminal Processing (ANSI)
+via ctypes. Falls back to plain text if unavailable.
 """
 from __future__ import annotations
 
 import os
+import re
 import sys
 from typing import Any
 
-# ── ANSI Colors (Windows 10+ & Linux) ─────────────────────────────────
+# ── Windows ANSI Support ──────────────────────────────────────────────
+def _enable_windows_ansi() -> bool:
+    """Enable Virtual Terminal Processing on Windows 10+ cmd.exe.
+    
+    Without this, ANSI escape codes print as raw text like [94m[1m...
+    Returns True if successfully enabled.
+    """
+    if sys.platform != "win32":
+        return True  # Not Windows, assume ANSI works
+    
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        
+        # STD_OUTPUT_HANDLE = -11
+        handle = kernel32.GetStdHandle(-11)
+        if handle == -1:
+            return False
+        
+        # Get current console mode
+        mode = ctypes.c_ulong()
+        if not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            return False
+        
+        # ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
+        VT_PROCESSING = 0x0004
+        if mode.value & VT_PROCESSING:
+            return True  # Already enabled
+        
+        # Try to enable it
+        new_mode = mode.value | VT_PROCESSING
+        if kernel32.SetConsoleMode(handle, new_mode):
+            return True
+        
+        # Some older Windows 10 builds also need DISABLE_NEWLINE_AUTO_RETURN
+        # ENABLE_PROCESSED_OUTPUT = 0x0001
+        new_mode = new_mode | 0x0001
+        return bool(kernel32.SetConsoleMode(handle, new_mode))
+    except Exception:
+        return False
+
+
+def _strip_ansi(text: str) -> str:
+    """Remove ANSI escape sequences from text."""
+    return re.sub(r'\033\[[0-9;]*m', '', text)
+
+
+# ── ANSI Colors ───────────────────────────────────────────────────────
 _NO_COLOR = os.getenv("NO_COLOR") or os.getenv("TERM") == "dumb"
+_ANSI_ENABLED = False
 
 
 def _supports_color() -> bool:
     if _NO_COLOR:
         return False
     if sys.platform == "win32":
-        return True  # Windows 10+ supports ANSI via VT processing
+        return _enable_windows_ansi()
     return hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
 
 
-if _supports_color():
+# Enable ANSI on Windows ASAP (before any print)
+_ANSI_ENABLED = _supports_color()
+
+if _ANSI_ENABLED:
     R = "\033[91m"    # red
     G = "\033[92m"    # green
     Y = "\033[93m"    # yellow

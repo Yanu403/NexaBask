@@ -8,6 +8,10 @@ if not exist .venv\Scripts\python.exe (
   exit /b 1
 )
 
+REM ── Best experience: use Windows Terminal (wt.exe) for ANSI colors ──
+REM If running in cmd.exe, colors will be auto-enabled via VT processing.
+REM If colors still appear as raw codes, try:  wt.exe -d "%~dp0" cmd /k "%~f0"
+
 .venv\Scripts\python.exe run_session_basket_demo_mt5_loop.py ^
   --config runtime\session_basket_demo_config.json ^
   --state-dir runtime\session_basket_states ^
