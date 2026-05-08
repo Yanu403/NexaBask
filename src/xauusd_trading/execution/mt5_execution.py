@@ -163,15 +163,113 @@ class MT5ExecutionAdapter:
                 raise RuntimeError(f'No tick available for symbol: {intent.symbol}')
 
             order_type = mt5.ORDER_TYPE_BUY if intent.side == 'LONG' else mt5.ORDER_TYPE_SELL
-            price = float(tick.ask if intent.side == 'LONG' else tick.bid)
+            actual_price = float(tick.ask if intent.side == 'LONG' else tick.bid)
+
+            # ── CRITICAL: Adjust SL/TP relative to actual execution price ──
+            # Signal SL/TP are computed relative to signal.entry_price,
+            # but we execute at actual market price (tick.ask/bid).
+            # Without adjustment, SL could be on wrong side of actual price → 10016.
+            signal_entry = intent.entry_price
+            price_offset = actual_price - signal_entry  # e.g. +0.15 if ASK > signal entry
+            sl = intent.stop_loss + price_offset
+            tp = intent.take_profit + price_offset
+
+            # ── Broker minimum stops level check ──
+            # SYMBOL_TRADE_STOPS_LEVEL is in POINTS (not pips)
+            # Must convert: point_size = symbol_info.point, stops = symbol_info.trade_stops_level
+            point = float(getattr(symbol_info, 'point', 0.00001))
+            stops_level = int(getattr(symbol_info, 'trade_stops_level', 0) or 0)
+            # Spread-based stops: some brokers use stops_level = 0 meaning "use spread"
+            spread_points = int(getattr(symbol_info, 'spread', 0) or 0)
+            min_stop_points = max(stops_level, spread_points) * point
+            # Add small buffer (1 point) to avoid edge-case rejections
+            min_stop_distance = min_stop_points + point
+
+            # Validate and enforce minimum stop distance from actual price
+            sl_distance = abs(actual_price - sl)
+            tp_distance = abs(actual_price - tp)
+            sl_too_close = sl_distance < min_stop_distance
+            tp_too_close = tp_distance < min_stop_distance
+
+            if sl_too_close:
+                # Push SL outward to minimum + buffer
+                if intent.side == 'LONG':
+                    sl = actual_price - min_stop_distance
+                else:
+                    sl = actual_price + min_stop_distance
+                logger.warning(
+                    'SL too close to price (dist=%.5f < min=%.5f). Adjusted SL to %.5f',
+                    sl_distance, min_stop_distance, sl,
+                )
+
+            if tp_too_close:
+                if intent.side == 'LONG':
+                    tp = actual_price + min_stop_distance
+                else:
+                    tp = actual_price - min_stop_distance
+                logger.warning(
+                    'TP too close to price (dist=%.5f < min=%.5f). Adjusted TP to %.5f',
+                    tp_distance, min_stop_distance, tp,
+                )
+
+            # ── Re-validate SL/TP direction after adjustment ──
+            if intent.side == 'LONG':
+                if not (sl < actual_price < tp):
+                    logger.error(
+                        'LONG SL/TP invalid after adjustment: price=%.5f SL=%.5f TP=%.5f',
+                        actual_price, sl, tp,
+                    )
+                    return {
+                        'sent': False, 'mode': 'LIVE', 'retcode': -1,
+                        'reason': f'SL_TP_INVALID_AFTER_ADJUST: price={actual_price} sl={sl} tp={tp}',
+                        'price': actual_price,
+                    }
+            else:  # SHORT
+                if not (tp < actual_price < sl):
+                    logger.error(
+                        'SHORT SL/TP invalid after adjustment: price=%.5f SL=%.5f TP=%.5f',
+                        actual_price, sl, tp,
+                    )
+                    return {
+                        'sent': False, 'mode': 'LIVE', 'retcode': -1,
+                        'reason': f'SL_TP_INVALID_AFTER_ADJUST: price={actual_price} sl={sl} tp={tp}',
+                        'price': actual_price,
+                    }
+
+            # ── Re-size position based on actual risk distance ──
+            # The original volume was sized for signal_entry→SL distance.
+            # After SL adjustment, risk distance changed → must re-size.
+            original_risk_distance = abs(signal_entry - intent.stop_loss)
+            actual_risk_distance = abs(actual_price - sl)
+            if original_risk_distance > 0 and actual_risk_distance > 0:
+                volume_ratio = original_risk_distance / actual_risk_distance
+                adjusted_volume = self._normalize_volume(intent.volume * volume_ratio)
+                if abs(adjusted_volume - intent.volume) > self.execution_config.lot_step:
+                    logger.info(
+                        'Volume adjusted: %.2f → %.2f (risk dist %.5f → %.5f)',
+                        intent.volume, adjusted_volume, original_risk_distance, actual_risk_distance,
+                    )
+                intent = OrderIntent(
+                    symbol=intent.symbol,
+                    side=intent.side,
+                    volume=adjusted_volume,
+                    entry_price=actual_price,
+                    stop_loss=sl,
+                    take_profit=tp,
+                    deviation=intent.deviation,
+                    magic=intent.magic,
+                    comment=intent.comment,
+                    metadata={**intent.metadata, 'original_volume': intent.volume, 'sl_adjusted': sl != intent.stop_loss + price_offset or sl_too_close},
+                )
+
             request = {
                 'action': mt5.TRADE_ACTION_DEAL,
                 'symbol': intent.symbol,
                 'volume': intent.volume,
                 'type': order_type,
-                'price': price,
-                'sl': intent.stop_loss,
-                'tp': intent.take_profit,
+                'price': actual_price,
+                'sl': sl,
+                'tp': tp,
                 'deviation': intent.deviation,
                 'magic': intent.magic,
                 'comment': intent.comment,
@@ -191,7 +289,12 @@ class MT5ExecutionAdapter:
                 'retcode': retcode,
                 'order': int(getattr(result, 'order', 0)),
                 'deal': int(getattr(result, 'deal', 0)),
-                'price': price,
+                'price': actual_price,
+                'sl_submitted': sl,
+                'tp_submitted': tp,
+                'stops_level_points': stops_level,
+                'spread_points': spread_points,
+                'min_stop_distance': min_stop_distance,
                 'request': request,
             }
         finally:

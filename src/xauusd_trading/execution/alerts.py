@@ -119,11 +119,42 @@ def format_paper_trade_event(event: dict[str, Any]) -> str:
             sent = send_result.get("sent", False)
             retcode = send_result.get("retcode", -1)
             mode = send_result.get("mode", "?")
+            sl_adjusted = intent_meta.get("sl_adjusted", False)
+            original_volume = intent_meta.get("original_volume")
+            sl_submitted = send_result.get("sl_submitted")
+            tp_submitted = send_result.get("tp_submitted")
+            stops_info = send_result.get("stops_level_points")
+            reject_reason = send_result.get("reason", "")
 
             status_emoji = "✅" if sent else "❌"
             status_text = f"{status_emoji} ORDER {'FILLED' if sent else 'REJECTED'}"
             if not sent:
-                status_text += f" (retcode {retcode})"
+                if reject_reason:
+                    status_text += f" │ {reject_reason}"
+                elif retcode == 10016:
+                    status_text += " │ SL/TP too close (INVALID_STOPS)"
+                elif retcode == 10019:
+                    status_text += " │ Invalid volume/price"
+                else:
+                    status_text += f" (retcode {retcode})"
+
+            # Show adjustment warnings
+            adjust_lines = ""
+            if sl_adjusted:
+                adjust_lines += "\n⚠️ SL adjusted to meet broker min stops"
+            if original_volume is not None and abs(volume - original_volume) > 0.001:
+                adjust_lines += f"\n⚠️ Volume adjusted: {original_volume:.2f} → {volume:.2f} lot"
+
+            # Show actual submitted SL/TP if different from signal
+            sl_tp_detail = ""
+            if sl_submitted is not None and abs(sl_submitted - sl) > 0.00001:
+                fmt = ".5f" if entry < 100 else ".2f"
+                sl_tp_detail = f"\n📋 Submitted: SL={sl_submitted:{fmt}} TP={tp_submitted:{fmt}}"
+                if stops_info is not None:
+                    sl_tp_detail += f" (stops_level={stops_info}pts)"
+
+            # Choose format based on price magnitude
+            fmt = ".5f" if entry < 100 else ".2f"
 
             return (
                 f"{'━' * 28}\n"
@@ -132,9 +163,10 @@ def format_paper_trade_event(event: dict[str, Any]) -> str:
                 f"{_fmt_side(side)}  <b>{symbol}</b>  ×{volume:.2f} lot\n"
                 f"{_fmt_branch(branch_id)}  (risk {risk_pct*100:.1f}%)\n"
                 f"\n"
-                f"💰 Entry: <code>{entry:.5f}</code>\n"
-                f"🛑 SL: <code>{sl:.5f}</code> ({risk_pips})\n"
-                f"🎯 TP: <code>{tp:.5f}</code> (R:R {rr:.1f})\n"
+                f"💰 Entry: <code>{entry:{fmt}}</code>\n"
+                f"🛑 SL: <code>{sl:{fmt}}</code> ({risk_pips})\n"
+                f"🎯 TP: <code>{tp:{fmt}}</code> (R:R {rr:.1f})\n"
+                f"{adjust_lines}{sl_tp_detail}\n"
                 f"\n"
                 f"{status_text} [{mode}]\n"
                 f"🕐 Time: <code>{intent_meta.get('timestamp', '?')}</code>"
