@@ -2,6 +2,34 @@
 
 Bot trading XAUUSD dengan arsitektur realistis dan bertahap.
 
+## Status snapshot
+
+Current state project ini sudah melewati fase sekadar eksperimen liar.
+Fondasi backtest, risk, reporting, MT5 paper runtime, dan MT5 execution runtime
+sudah ada. Namun ini **belum boleh dianggap production bot all-weather**.
+
+Yang sudah benar-benar ada sekarang:
+- reusable backtest foundation
+- risk layer dasar + guards
+- MT5 paper-trade runtime
+- MT5 execution runtime dengan dry-run default
+- multi-symbol basket runtime awal
+- Telegram alert hook opsional
+- dokumentasi deploy Windows RDP / MT5
+
+Yang belum selesai:
+- broker reconciliation yang lebih matang
+- restart-safe state handling yang lebih lengkap
+- risk caps yang makin ketat untuk live
+- validasi lintas market regime yang lebih keras
+- bukti alpha yang cukup untuk menyebut sistem ini final
+
+## Repository notes
+
+- Repo GitHub utama bersifat **private**.
+- Branch default adalah **`main`**.
+- Runtime config lokal seperti `runtime/*.json` non-sample dan `.env*` memang di-ignore agar secret tidak ikut ke git.
+
 ## Current reality
 
 Project ini belum berupa production bot modular penuh.
