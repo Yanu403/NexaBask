@@ -26,6 +26,7 @@ class SessionContinuationFVGStrategy(Strategy):
     rr_target: float = 2.0
     pip_size: float = 0.0001
     spread_points_per_pip: float = 10.0
+    lot_size: float = 100.0  # XAUUSD default: 1 lot = 100 oz. Override to 100_000 for forex.
     max_spread_pips: float = 1.5
     swing_lookback: int = 3
     stop_buffer_pips: float = 0.5
@@ -170,7 +171,7 @@ class SessionContinuationFVGStrategy(Strategy):
                 'rr_target': self.rr_target,
                 'pip_size': self.pip_size,
                 'spread_points_per_pip': self.spread_points_per_pip,
-                'lot_size': 100,  # XAUUSD: 1 lot = 100 oz
+                'lot_size': self.lot_size,
             },
         )
 

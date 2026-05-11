@@ -129,6 +129,13 @@ def build_branch_specs(runtime_config: dict, mt5_configs: dict[str, MT5Config]) 
         # DISABLED: eurusd_sweep (PF=0.16), gbpusd_sweep (PF=0.07)
         # DISABLED: xauusd_orb (PF=0.80, SL too wide)
     ])
+    supported_branches = {'gbpusd_orb', 'eurusd_orb', 'xauusd_continuation'}
+    unknown_branches = sorted(set(active_branches) - supported_branches)
+    if unknown_branches:
+        raise ValueError(
+            'Unsupported active_branches in runtime config: '
+            f'{unknown_branches}. Supported: {sorted(supported_branches)}'
+        )
 
     branches = []
     if 'gbpusd_orb' in active_branches:
@@ -181,6 +188,7 @@ def build_branch_specs(runtime_config: dict, mt5_configs: dict[str, MT5Config]) 
                 execution_timeframe='M5',
                 pip_size=0.01,
                 spread_points_per_pip=100.0,
+                lot_size=100.0,
                 max_spread_pips=10.0,          # TUNED: was 1.5
                 min_fvg_pips=0.03,             # TUNED: was 1.0 (XAU scale)
                 impulse_lookback_bars=48,       # TUNED: was 8
@@ -276,6 +284,8 @@ def run_once(args: argparse.Namespace) -> dict:
         max_drawdown_pct=float(risk_cfg.get('max_drawdown_pct', 12.0)),
         max_consecutive_losses=int(risk_cfg.get('max_consecutive_losses', 8)),
         min_balance=float(risk_cfg.get('min_balance', 1000.0)),
+        max_position_lots=float(risk_cfg.get('max_position_lots', 10.0)),
+        min_risk_distance_pips=float(risk_cfg.get('min_risk_distance_pips', 5.0)),
     )
 
     mt5_configs = build_mt5_configs(runtime_config)

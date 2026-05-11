@@ -130,6 +130,8 @@ def run_once(args: argparse.Namespace) -> dict:
         max_drawdown_pct=float(risk_cfg.get('max_drawdown_pct', 12.0)),
         max_consecutive_losses=int(risk_cfg.get('max_consecutive_losses', 8)),
         min_balance=float(risk_cfg.get('min_balance', 1000.0)),
+        max_position_lots=float(risk_cfg.get('max_position_lots', 10.0)),
+        min_risk_distance_pips=float(risk_cfg.get('min_risk_distance_pips', 5.0)),
     )
 
     mt5_configs = build_mt5_configs(runtime_config)
@@ -236,6 +238,8 @@ def run_once(args: argparse.Namespace) -> dict:
             'max_drawdown_pct': risk_config.max_drawdown_pct,
             'max_consecutive_losses': risk_config.max_consecutive_losses,
             'min_balance': risk_config.min_balance,
+            'max_position_lots': risk_config.max_position_lots,
+            'min_risk_distance_pips': risk_config.min_risk_distance_pips,
         },
         'guards': {
             'max_live_positions_total': args.max_live_positions_total,

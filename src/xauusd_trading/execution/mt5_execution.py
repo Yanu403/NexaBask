@@ -33,6 +33,7 @@ class MT5ExecutionAdapter:
     def __init__(self, *, mt5_config: MT5Config, execution_config: MT5ExecutionConfig) -> None:
         self.mt5_config = mt5_config
         self.execution_config = execution_config
+        self._last_build_intent_reject_reason: str | None = None
 
     def fetch_positions(self) -> list[BrokerPosition]:
         mt5 = initialize_mt5(self.mt5_config)
@@ -62,12 +63,14 @@ class MT5ExecutionAdapter:
         finally:
             shutdown_mt5(mt5)
 
-    def build_intent(self, signal: TradeSignal, *, account_balance: float, risk_config: RiskConfig) -> OrderIntent:
+    def build_intent(self, signal: TradeSignal, *, account_balance: float, risk_config: RiskConfig) -> OrderIntent | None:
+        self._last_build_intent_reject_reason = None
         # BUG 3 fix: respect per-branch risk_per_trade from signal metadata
         risk_per_trade_override = signal.metadata.get('risk_per_trade')
         if isinstance(risk_per_trade_override, (int, float)) and float(risk_per_trade_override) > 0:
+            clamped_risk = min(float(risk_per_trade_override), 0.05)
             effective_risk_config = RiskConfig(
-                risk_per_trade=float(risk_per_trade_override),
+                risk_per_trade=clamped_risk,
                 max_drawdown_pct=risk_config.max_drawdown_pct,
                 max_consecutive_losses=risk_config.max_consecutive_losses,
                 min_balance=risk_config.min_balance,
@@ -78,22 +81,83 @@ class MT5ExecutionAdapter:
         else:
             effective_risk_config = risk_config
 
-        risk_manager = RiskManager(initial_balance=account_balance, config=effective_risk_config)
         pip_size = float(signal.metadata.get('pip_size', 0.0001))
         symbol_hint = str(signal.metadata.get('symbol') or self.mt5_config.symbol).upper()
         default_lot_size = 100.0 if 'XAU' in symbol_hint else 100_000.0
         lot_size = float(signal.metadata.get('lot_size', default_lot_size))
-        risk_budget = account_balance * effective_risk_config.risk_per_trade
-        _, raw_units = risk_manager.size_position(
-            entry_price=signal.entry_price,
-            stop_loss=signal.stop_loss,
-            pip_size=pip_size,
-            lot_size=lot_size,
-        )
-        # size_position() returns CONTRACT UNITS (e.g. 4,100), not lots.
-        # Must convert to lots: lots = units / lot_size
-        raw_lots = raw_units / lot_size
-        volume = self._normalize_volume(raw_lots)
+        sizing_balance = float(account_balance)
+        balance_source = 'cli_or_dry_run_fallback'
+        risk_per_lot: float | None = None
+
+        # In LIVE mode, never size from a stale CLI fallback or strategy contract-size
+        # assumption. Ask MT5 for current equity and broker-native loss per 1 lot.
+        if self.execution_config.allow_live_send:
+            mt5 = initialize_mt5(self.mt5_config)
+            try:
+                account_info = mt5.account_info()
+                equity = float(getattr(account_info, 'equity', 0.0) or 0.0) if account_info else 0.0
+                balance = float(getattr(account_info, 'balance', 0.0) or 0.0) if account_info else 0.0
+                sizing_balance = equity if equity > 0 else balance
+                if sizing_balance <= 0:
+                    self._last_build_intent_reject_reason = 'LIVE_ACCOUNT_INFO_UNAVAILABLE'
+                    return None
+                balance_source = 'mt5_equity' if equity > 0 else 'mt5_balance'
+
+                symbol_info = mt5.symbol_info(self.mt5_config.symbol)
+                if symbol_info is None:
+                    self._last_build_intent_reject_reason = 'SYMBOL_INFO_UNAVAILABLE'
+                    return None
+                if not bool(getattr(symbol_info, 'visible', False)):
+                    if not mt5.symbol_select(self.mt5_config.symbol, True):
+                        self._last_build_intent_reject_reason = 'SYMBOL_SELECT_FAILED'
+                        return None
+                    symbol_info = mt5.symbol_info(self.mt5_config.symbol)
+                    if symbol_info is None or not bool(getattr(symbol_info, 'visible', False)):
+                        self._last_build_intent_reject_reason = 'SYMBOL_NOT_VISIBLE_AFTER_SELECT'
+                        return None
+
+                lot_size = float(getattr(symbol_info, 'trade_contract_size', 0.0) or lot_size)
+                order_type = mt5.ORDER_TYPE_BUY if signal.side == 'LONG' else mt5.ORDER_TYPE_SELL
+                calc = mt5.order_calc_profit(order_type, self.mt5_config.symbol, 1.0, signal.entry_price, signal.stop_loss)
+                risk_per_lot = abs(float(calc)) if calc is not None else 0.0
+                if risk_per_lot <= 0:
+                    self._last_build_intent_reject_reason = 'ORDER_CALC_PROFIT_UNAVAILABLE'
+                    return None
+            finally:
+                shutdown_mt5(mt5)
+
+        risk_budget = sizing_balance * effective_risk_config.risk_per_trade
+        if risk_budget <= 0:
+            self._last_build_intent_reject_reason = 'INVALID_RISK_BUDGET'
+            return None
+
+        if risk_per_lot is not None:
+            raw_lots = min(risk_budget / risk_per_lot, effective_risk_config.max_position_lots)
+            raw_units = raw_lots * lot_size
+        else:
+            risk_manager = RiskManager(initial_balance=sizing_balance, config=effective_risk_config)
+            _, raw_units = risk_manager.size_position(
+                entry_price=signal.entry_price,
+                stop_loss=signal.stop_loss,
+                pip_size=pip_size,
+                lot_size=lot_size,
+            )
+            raw_lots = raw_units / lot_size if lot_size > 0 else 0.0
+
+        if raw_units <= 0 or raw_lots <= 0:
+            self._last_build_intent_reject_reason = 'RISK_MANAGER_REJECTED_OR_ZERO_SIZE'
+            return None
+        if raw_lots < self.execution_config.min_lot:
+            self._last_build_intent_reject_reason = f'RAW_VOLUME_BELOW_MIN_LOT: raw={raw_lots:.4f} min={self.execution_config.min_lot}'
+            return None
+
+        # Risk sizing must never round up. Floor to broker step so submitted risk is
+        # <= budget; final live guard rechecks with actual market price and SL.
+        volume = self._normalize_volume(raw_lots, round_up_to_min=False)
+        if volume <= 0:
+            self._last_build_intent_reject_reason = 'NORMALIZED_VOLUME_ZERO'
+            return None
+
         return OrderIntent(
             symbol=self.mt5_config.symbol,
             side=signal.side,
@@ -108,7 +172,12 @@ class MT5ExecutionAdapter:
                 **dict(signal.metadata),
                 'lot_size': lot_size,
                 'risk_budget': risk_budget,
+                'risk_budget_source': balance_source,
+                'sizing_balance': sizing_balance,
                 'effective_risk_per_trade': effective_risk_config.risk_per_trade,
+                'max_position_lots': effective_risk_config.max_position_lots,
+                'risk_per_lot': risk_per_lot,
+                'raw_lots_before_normalization': raw_lots,
                 'estimated_risk_currency': volume * lot_size * abs(signal.entry_price - signal.stop_loss),
             },
         )
@@ -141,6 +210,12 @@ class MT5ExecutionAdapter:
             return ExecutionDecision(action='HOLD', reason='SAME_SIDE_POSITION_ALREADY_SYNCED', broker_positions=broker_positions)
 
         intent = self.build_intent(signal, account_balance=account_balance, risk_config=risk_config)
+        if intent is None:
+            return ExecutionDecision(
+                action='HOLD',
+                reason=self._last_build_intent_reject_reason or 'INVALID_VOLUME',
+                broker_positions=broker_positions,
+            )
         if intent.volume <= 0:
             return ExecutionDecision(action='HOLD', reason='INVALID_VOLUME', broker_positions=broker_positions, intent=intent)
 
@@ -200,6 +275,9 @@ class MT5ExecutionAdapter:
             #   BUY position SL/TP trigger on BID
             #   SELL position SL/TP trigger on ASK
             point = float(getattr(symbol_info, 'point', 0.00001))
+            live_min_lot = float(getattr(symbol_info, 'volume_min', 0.0) or self.execution_config.min_lot)
+            live_max_lot = float(getattr(symbol_info, 'volume_max', 0.0) or self.execution_config.max_lot)
+            live_lot_step = float(getattr(symbol_info, 'volume_step', 0.0) or self.execution_config.lot_step)
             stops_level = int(getattr(symbol_info, 'trade_stops_level', 0) or 0)
             freeze_level = int(getattr(symbol_info, 'trade_freeze_level', 0) or 0)
             spread_points = int(getattr(symbol_info, 'spread', 0) or 0)
@@ -282,12 +360,12 @@ class MT5ExecutionAdapter:
             # would exceed budget; reject instead.
             volume_ratio = original_risk_distance / actual_risk_distance if actual_risk_distance > 0 else 0.0
             raw_adjusted_volume = intent.volume * volume_ratio
-            if raw_adjusted_volume < self.execution_config.min_lot:
+            if raw_adjusted_volume < live_min_lot:
                 return {
                     'sent': False,
                     'mode': 'LIVE',
                     'retcode': -1,
-                    'reason': f'ADJUSTED_VOLUME_BELOW_MIN_LOT: raw={raw_adjusted_volume:.4f} min={self.execution_config.min_lot}',
+                    'reason': f'ADJUSTED_VOLUME_BELOW_MIN_LOT: raw={raw_adjusted_volume:.4f} min={live_min_lot}',
                     'price': actual_price,
                     'bid': bid,
                     'ask': ask,
@@ -295,10 +373,32 @@ class MT5ExecutionAdapter:
                     'sl_submitted': sl,
                     'tp_submitted': tp,
                 }
-            adjusted_volume = self._normalize_volume(raw_adjusted_volume)
+            live_max_submit_lot = min(
+                live_max_lot,
+                self.execution_config.max_lot,
+                float(intent.metadata.get('max_position_lots', self.execution_config.max_lot) or self.execution_config.max_lot),
+            )
+            step = max(live_lot_step, 0.0001)
+            capped_adjusted_volume = min(raw_adjusted_volume, live_max_submit_lot)
+            adjusted_volume = int(capped_adjusted_volume / step) * step
+            adjusted_volume = round(adjusted_volume, 4)
+            if adjusted_volume < live_min_lot:
+                return {
+                    'sent': False,
+                    'mode': 'LIVE',
+                    'retcode': -1,
+                    'reason': f'NORMALIZED_VOLUME_BELOW_MIN_LOT: normalized={adjusted_volume:.4f} min={live_min_lot}',
+                    'price': actual_price,
+                    'bid': bid,
+                    'ask': ask,
+                    'spread_price': spread_price,
+                    'sl_submitted': sl,
+                    'tp_submitted': tp,
+                }
             lot_size = float(intent.metadata.get('lot_size', 100.0 if 'XAU' in intent.symbol.upper() else 100_000.0))
             risk_budget = float(intent.metadata.get('risk_budget', 0.0) or 0.0)
-            estimated_actual_risk = adjusted_volume * lot_size * actual_risk_distance
+            calc_loss = mt5.order_calc_profit(order_type, intent.symbol, adjusted_volume, actual_price, sl)
+            estimated_actual_risk = abs(float(calc_loss)) if calc_loss is not None else adjusted_volume * lot_size * actual_risk_distance
             # Final live safety guard: if the order would risk materially more than
             # the configured budget, reject instead of sending an oversized trade.
             if risk_budget > 0 and estimated_actual_risk > risk_budget * 1.10:
@@ -398,6 +498,9 @@ class MT5ExecutionAdapter:
                 'freeze_level_points': freeze_level,
                 'spread_points': spread_points,
                 'min_stop_distance': min_stop_distance,
+                'live_min_lot': live_min_lot,
+                'live_max_lot': live_max_lot,
+                'live_lot_step': live_lot_step,
                 'request': request,
             }
         finally:
@@ -650,9 +753,15 @@ class MT5ExecutionAdapter:
         finally:
             shutdown_mt5(mt5)
 
-    def _normalize_volume(self, raw_volume: float) -> float:
+    def _normalize_volume(self, raw_volume: float, *, round_up_to_min: bool = True) -> float:
         step = max(self.execution_config.lot_step, 0.0001)
-        clipped = max(self.execution_config.min_lot, min(raw_volume, self.execution_config.max_lot))
-        units = round(clipped / step)
+        upper = min(raw_volume, self.execution_config.max_lot)
+        if not round_up_to_min and upper < self.execution_config.min_lot:
+            return 0.0
+        clipped = max(self.execution_config.min_lot, upper) if round_up_to_min else upper
+        # Floor by default for risk sizing so rounding never increases risk.
+        units = int(clipped / step) if not round_up_to_min else round(clipped / step)
         normalized = units * step
+        if not round_up_to_min and normalized < self.execution_config.min_lot:
+            return 0.0
         return round(normalized, 4)

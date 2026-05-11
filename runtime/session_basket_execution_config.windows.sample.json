@@ -1,5 +1,5 @@
 {
-  "active_branches": ["eurusd_sweep", "gbpusd_orb", "eurusd_orb", "xauusd_continuation"],
+  "active_branches": ["gbpusd_orb", "eurusd_orb", "xauusd_continuation"],
   "telegram": {
     "bot_token": "YOUR_TELEGRAM_BOT_TOKEN",
     "chat_id": "YOUR_TELEGRAM_CHAT_ID",
@@ -36,7 +36,7 @@
     "max_consecutive_losses": 6,
     "min_balance": 1000.0,
     "min_risk_distance_pips": 3.0,
-    "max_position_lots": 10.0
+    "max_position_lots": 1.0
   },
   "spread_limits_pips": {
     "EURUSD": 4.0,
@@ -48,6 +48,9 @@
     "magic": 35042026,
     "comment": "xau_bot_v1",
     "close_opposite_first": true,
+    "min_lot": 0.01,
+    "max_lot": 1.0,
+    "lot_step": 0.01,
     "sltp_tolerance_points": 0.05
   }
 }
