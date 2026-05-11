@@ -106,24 +106,31 @@ def format_paper_trade_event(event: dict[str, Any]) -> str:
         # ── Decision header ──
         if action == "OPEN":
             side = intent.get("side", "?")
-            entry = float(intent.get("entry_price", 0))
-            sl = float(intent.get("stop_loss", 0))
-            tp = float(intent.get("take_profit", 0))
-            volume = float(intent.get("volume", 0))
+            signal_entry = float(intent.get("entry_price", 0))
+            signal_sl = float(intent.get("stop_loss", 0))
+            signal_tp = float(intent.get("take_profit", 0))
+            volume = float(send_result.get("volume_submitted", intent.get("volume", 0)))
             intent_meta = intent.get("metadata", {})
             pip_size = float(intent_meta.get("pip_size", 0.0001))
             branch_id = intent_meta.get("branch_id", "?")
             risk_pct = float(intent_meta.get("risk_per_trade", 0))
-            rr = abs(entry - tp) / abs(entry - sl) if abs(entry - sl) > 0 else 0
-            risk_pips = _fmt_pips(abs(entry - sl), pip_size)
             sent = send_result.get("sent", False)
             retcode = send_result.get("retcode", -1)
             mode = send_result.get("mode", "?")
-            sl_adjusted = intent_meta.get("sl_adjusted", False)
-            original_volume = intent_meta.get("original_volume")
-            sl_submitted = send_result.get("sl_submitted")
-            tp_submitted = send_result.get("tp_submitted")
+            sl_submitted = send_result.get("sl_submitted", signal_sl)
+            tp_submitted = send_result.get("tp_submitted", signal_tp)
+            entry = float(send_result.get("price", signal_entry))
+            sl = float(sl_submitted)
+            tp = float(tp_submitted)
+            rr = abs(entry - tp) / abs(entry - sl) if abs(entry - sl) > 0 else 0
+            risk_pips = _fmt_pips(abs(entry - sl), pip_size)
+            sl_adjusted = bool(send_result.get("sl_submitted") is not None and abs(float(send_result.get("sl_submitted")) - signal_sl) > 0.00001)
+            original_volume = intent.get("volume")
             stops_info = send_result.get("stops_level_points")
+            freeze_info = send_result.get("freeze_level_points")
+            bid = send_result.get("bid")
+            ask = send_result.get("ask")
+            spread_price = send_result.get("spread_price")
             reject_reason = send_result.get("reason", "")
 
             status_emoji = "✅" if sent else "❌"
@@ -141,17 +148,25 @@ def format_paper_trade_event(event: dict[str, Any]) -> str:
             # Show adjustment warnings
             adjust_lines = ""
             if sl_adjusted:
-                adjust_lines += "\n⚠️ SL adjusted to meet broker min stops"
-            if original_volume is not None and abs(volume - original_volume) > 0.001:
-                adjust_lines += f"\n⚠️ Volume adjusted: {original_volume:.2f} → {volume:.2f} lot"
+                adjust_lines += "\n⚠️ SL kept/widened from structural level; checked vs broker Bid/Ask stops"
+            if original_volume is not None and abs(volume - float(original_volume)) > 0.001:
+                adjust_lines += f"\n⚠️ Volume adjusted: {float(original_volume):.2f} → {volume:.2f} lot"
 
-            # Show actual submitted SL/TP if different from signal
+            # Show actual market/submitted detail
+            market_detail = ""
+            if bid is not None and ask is not None:
+                spread_pips = float(spread_price or 0.0) / pip_size if pip_size > 0 else 0.0
+                market_detail += f"\n📋 Bid/Ask: {float(bid):{'.5f' if entry < 100 else '.2f'}} / {float(ask):{'.5f' if entry < 100 else '.2f'}} (spread {spread_pips:.1f} pips)"
+            if stops_info is not None:
+                market_detail += f"\n📋 Broker stops: {stops_info}pts"
+                if freeze_info is not None:
+                    market_detail += f" freeze={freeze_info}pts"
+
+            # Show signal vs submitted if different
             sl_tp_detail = ""
-            if sl_submitted is not None and abs(sl_submitted - sl) > 0.00001:
+            if abs(entry - signal_entry) > 0.00001 or abs(sl - signal_sl) > 0.00001 or abs(tp - signal_tp) > 0.00001:
                 fmt = ".5f" if entry < 100 else ".2f"
-                sl_tp_detail = f"\n📋 Submitted: SL={sl_submitted:{fmt}} TP={tp_submitted:{fmt}}"
-                if stops_info is not None:
-                    sl_tp_detail += f" (stops_level={stops_info}pts)"
+                sl_tp_detail = f"\n📋 Signal: Entry={signal_entry:{fmt}} SL={signal_sl:{fmt}} TP={signal_tp:{fmt}}"
 
             # Choose format based on price magnitude
             fmt = ".5f" if entry < 100 else ".2f"
@@ -166,7 +181,7 @@ def format_paper_trade_event(event: dict[str, Any]) -> str:
                 f"💰 Entry: <code>{entry:{fmt}}</code>\n"
                 f"🛑 SL: <code>{sl:{fmt}}</code> ({risk_pips})\n"
                 f"🎯 TP: <code>{tp:{fmt}}</code> (R:R {rr:.1f})\n"
-                f"{adjust_lines}{sl_tp_detail}\n"
+                f"{adjust_lines}{market_detail}{sl_tp_detail}\n"
                 f"\n"
                 f"{status_text} [{mode}]\n"
                 f"🕐 Time: <code>{intent_meta.get('timestamp', '?')}</code>"

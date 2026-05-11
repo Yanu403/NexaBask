@@ -163,104 +163,158 @@ class MT5ExecutionAdapter:
                 raise RuntimeError(f'No tick available for symbol: {intent.symbol}')
 
             order_type = mt5.ORDER_TYPE_BUY if intent.side == 'LONG' else mt5.ORDER_TYPE_SELL
-            actual_price = float(tick.ask if intent.side == 'LONG' else tick.bid)
+            bid = float(tick.bid)
+            ask = float(tick.ask)
+            actual_price = ask if intent.side == 'LONG' else bid
+            trigger_price = bid if intent.side == 'LONG' else ask
+            spread_price = max(ask - bid, 0.0)
 
-            # ── CRITICAL: Adjust SL/TP relative to actual execution price ──
-            # Signal SL/TP are computed relative to signal.entry_price,
-            # but we execute at actual market price (tick.ask/bid).
-            # Without adjustment, SL could be on wrong side of actual price → 10016.
+            # ── CRITICAL: preserve structural SL, do NOT tighten it toward price ──
+            # Previous version shifted SL/TP by (actual_price - signal_entry). For XAUUSD
+            # that can move SL closer to the bid/ask trigger side and cause immediate SL.
+            # Safer live behavior:
+            #   - keep structural SL from the strategy;
+            #   - if broker min stop requires it, move SL only FARTHER away;
+            #   - recompute TP from actual entry + actual risk * RR;
+            #   - resize volume for the actual risk distance.
             signal_entry = intent.entry_price
-            price_offset = actual_price - signal_entry  # e.g. +0.15 if ASK > signal entry
-            sl = intent.stop_loss + price_offset
-            tp = intent.take_profit + price_offset
+            original_sl = intent.stop_loss
+            original_tp = intent.take_profit
+            original_risk_distance = abs(signal_entry - original_sl)
+            original_reward_distance = abs(original_tp - signal_entry)
+            rr_target = original_reward_distance / original_risk_distance if original_risk_distance > 0 else 2.0
+
+            sl = original_sl
 
             # ── Broker minimum stops level check ──
-            # SYMBOL_TRADE_STOPS_LEVEL is in POINTS (not pips)
-            # Must convert: point_size = symbol_info.point, stops = symbol_info.trade_stops_level
+            # MT5 stop levels are checked from the trigger side, not entry side:
+            #   BUY position SL/TP trigger on BID
+            #   SELL position SL/TP trigger on ASK
             point = float(getattr(symbol_info, 'point', 0.00001))
             stops_level = int(getattr(symbol_info, 'trade_stops_level', 0) or 0)
-            # Spread-based stops: some brokers use stops_level = 0 meaning "use spread"
+            freeze_level = int(getattr(symbol_info, 'trade_freeze_level', 0) or 0)
             spread_points = int(getattr(symbol_info, 'spread', 0) or 0)
-            min_stop_points = max(stops_level, spread_points) * point
-            # Add small buffer (1 point) to avoid edge-case rejections
-            min_stop_distance = min_stop_points + point
+            min_stop_points = max(stops_level, freeze_level, spread_points) * point
+            # Use a larger buffer than 1 point so fast-moving XAUUSD doesn't instantly tag.
+            min_stop_distance = min_stop_points + max(point * 5, spread_price)
 
-            # Validate and enforce minimum stop distance from actual price
-            sl_distance = abs(actual_price - sl)
-            tp_distance = abs(actual_price - tp)
-            sl_too_close = sl_distance < min_stop_distance
-            tp_too_close = tp_distance < min_stop_distance
-
-            if sl_too_close:
-                # Push SL outward to minimum + buffer
-                if intent.side == 'LONG':
-                    sl = actual_price - min_stop_distance
-                else:
-                    sl = actual_price + min_stop_distance
-                logger.warning(
-                    'SL too close to price (dist=%.5f < min=%.5f). Adjusted SL to %.5f',
-                    sl_distance, min_stop_distance, sl,
-                )
-
-            if tp_too_close:
-                if intent.side == 'LONG':
-                    tp = actual_price + min_stop_distance
-                else:
-                    tp = actual_price - min_stop_distance
-                logger.warning(
-                    'TP too close to price (dist=%.5f < min=%.5f). Adjusted TP to %.5f',
-                    tp_distance, min_stop_distance, tp,
-                )
-
-            # ── Re-validate SL/TP direction after adjustment ──
+            # Enforce SL distance from BID/ASK trigger side. Only widen risk.
+            sl_adjusted = False
             if intent.side == 'LONG':
-                if not (sl < actual_price < tp):
+                max_allowed_sl = trigger_price - min_stop_distance
+                if sl >= max_allowed_sl:
+                    sl = max_allowed_sl
+                    sl_adjusted = True
+                    logger.warning(
+                        'LONG SL too close to BID trigger. Adjusted SL farther: %.5f → %.5f (bid=%.5f min=%.5f)',
+                        original_sl, sl, trigger_price, min_stop_distance,
+                    )
+            else:
+                min_allowed_sl = trigger_price + min_stop_distance
+                if sl <= min_allowed_sl:
+                    sl = min_allowed_sl
+                    sl_adjusted = True
+                    logger.warning(
+                        'SHORT SL too close to ASK trigger. Adjusted SL farther: %.5f → %.5f (ask=%.5f min=%.5f)',
+                        original_sl, sl, trigger_price, min_stop_distance,
+                    )
+
+            actual_risk_distance = abs(actual_price - sl)
+            if actual_risk_distance <= 0:
+                return {
+                    'sent': False,
+                    'mode': 'LIVE',
+                    'retcode': -1,
+                    'reason': f'INVALID_ACTUAL_RISK_DISTANCE: price={actual_price} sl={sl}',
+                    'price': actual_price,
+                    'bid': bid,
+                    'ask': ask,
+                    'spread_price': spread_price,
+                }
+
+            # Recompute TP from actual entry and actual risk, then enforce trigger-side stops.
+            if intent.side == 'LONG':
+                tp = actual_price + rr_target * actual_risk_distance
+                min_allowed_tp = trigger_price + min_stop_distance
+                if tp <= min_allowed_tp:
+                    tp = min_allowed_tp
+            else:
+                tp = actual_price - rr_target * actual_risk_distance
+                max_allowed_tp = trigger_price - min_stop_distance
+                if tp >= max_allowed_tp:
+                    tp = max_allowed_tp
+
+            # Re-validate against trigger side and actual entry.
+            if intent.side == 'LONG':
+                if not (sl < trigger_price and actual_price < tp):
                     logger.error(
-                        'LONG SL/TP invalid after adjustment: price=%.5f SL=%.5f TP=%.5f',
-                        actual_price, sl, tp,
+                        'LONG SL/TP invalid: bid=%.5f ask=%.5f entry=%.5f SL=%.5f TP=%.5f',
+                        bid, ask, actual_price, sl, tp,
                     )
                     return {
                         'sent': False, 'mode': 'LIVE', 'retcode': -1,
-                        'reason': f'SL_TP_INVALID_AFTER_ADJUST: price={actual_price} sl={sl} tp={tp}',
-                        'price': actual_price,
+                        'reason': f'SL_TP_INVALID_LONG: bid={bid} ask={ask} entry={actual_price} sl={sl} tp={tp}',
+                        'price': actual_price, 'bid': bid, 'ask': ask, 'spread_price': spread_price,
                     }
-            else:  # SHORT
-                if not (tp < actual_price < sl):
+            else:
+                if not (tp < actual_price and trigger_price < sl):
                     logger.error(
-                        'SHORT SL/TP invalid after adjustment: price=%.5f SL=%.5f TP=%.5f',
-                        actual_price, sl, tp,
+                        'SHORT SL/TP invalid: bid=%.5f ask=%.5f entry=%.5f SL=%.5f TP=%.5f',
+                        bid, ask, actual_price, sl, tp,
                     )
                     return {
                         'sent': False, 'mode': 'LIVE', 'retcode': -1,
-                        'reason': f'SL_TP_INVALID_AFTER_ADJUST: price={actual_price} sl={sl} tp={tp}',
-                        'price': actual_price,
+                        'reason': f'SL_TP_INVALID_SHORT: bid={bid} ask={ask} entry={actual_price} sl={sl} tp={tp}',
+                        'price': actual_price, 'bid': bid, 'ask': ask, 'spread_price': spread_price,
                     }
 
             # ── Re-size position based on actual risk distance ──
-            # The original volume was sized for signal_entry→SL distance.
-            # After SL adjustment, risk distance changed → must re-size.
-            original_risk_distance = abs(signal_entry - intent.stop_loss)
-            actual_risk_distance = abs(actual_price - sl)
-            if original_risk_distance > 0 and actual_risk_distance > 0:
-                volume_ratio = original_risk_distance / actual_risk_distance
-                adjusted_volume = self._normalize_volume(intent.volume * volume_ratio)
-                if abs(adjusted_volume - intent.volume) > self.execution_config.lot_step:
-                    logger.info(
-                        'Volume adjusted: %.2f → %.2f (risk dist %.5f → %.5f)',
-                        intent.volume, adjusted_volume, original_risk_distance, actual_risk_distance,
-                    )
-                intent = OrderIntent(
-                    symbol=intent.symbol,
-                    side=intent.side,
-                    volume=adjusted_volume,
-                    entry_price=actual_price,
-                    stop_loss=sl,
-                    take_profit=tp,
-                    deviation=intent.deviation,
-                    magic=intent.magic,
-                    comment=intent.comment,
-                    metadata={**intent.metadata, 'original_volume': intent.volume, 'sl_adjusted': sl != intent.stop_loss + price_offset or sl_too_close},
+            # Wider actual risk → lower lots. Never clip upward to min_lot silently if risk
+            # would exceed budget; reject instead.
+            volume_ratio = original_risk_distance / actual_risk_distance if actual_risk_distance > 0 else 0.0
+            raw_adjusted_volume = intent.volume * volume_ratio
+            if raw_adjusted_volume < self.execution_config.min_lot:
+                return {
+                    'sent': False,
+                    'mode': 'LIVE',
+                    'retcode': -1,
+                    'reason': f'ADJUSTED_VOLUME_BELOW_MIN_LOT: raw={raw_adjusted_volume:.4f} min={self.execution_config.min_lot}',
+                    'price': actual_price,
+                    'bid': bid,
+                    'ask': ask,
+                    'spread_price': spread_price,
+                    'sl_submitted': sl,
+                    'tp_submitted': tp,
+                }
+            adjusted_volume = self._normalize_volume(raw_adjusted_volume)
+            if abs(adjusted_volume - intent.volume) > self.execution_config.lot_step:
+                logger.info(
+                    'Volume adjusted: %.2f → %.2f (risk dist %.5f → %.5f)',
+                    intent.volume, adjusted_volume, original_risk_distance, actual_risk_distance,
                 )
+            intent = OrderIntent(
+                symbol=intent.symbol,
+                side=intent.side,
+                volume=adjusted_volume,
+                entry_price=actual_price,
+                stop_loss=sl,
+                take_profit=tp,
+                deviation=intent.deviation,
+                magic=intent.magic,
+                comment=intent.comment,
+                metadata={
+                    **intent.metadata,
+                    'original_volume': intent.volume,
+                    'sl_adjusted': sl_adjusted,
+                    'original_signal_entry': signal_entry,
+                    'original_stop_loss': original_sl,
+                    'original_take_profit': original_tp,
+                    'actual_bid': bid,
+                    'actual_ask': ask,
+                    'spread_price': spread_price,
+                    'rr_target_live': rr_target,
+                },
+            )
 
             request = {
                 'action': mt5.TRADE_ACTION_DEAL,
@@ -290,9 +344,20 @@ class MT5ExecutionAdapter:
                 'order': int(getattr(result, 'order', 0)),
                 'deal': int(getattr(result, 'deal', 0)),
                 'price': actual_price,
+                'bid': bid,
+                'ask': ask,
+                'trigger_price': trigger_price,
+                'spread_price': spread_price,
+                'volume_submitted': intent.volume,
                 'sl_submitted': sl,
                 'tp_submitted': tp,
+                'original_signal_entry': signal_entry,
+                'original_stop_loss': original_sl,
+                'original_take_profit': original_tp,
+                'actual_risk_distance': actual_risk_distance,
+                'rr_target_live': rr_target,
                 'stops_level_points': stops_level,
+                'freeze_level_points': freeze_level,
                 'spread_points': spread_points,
                 'min_stop_distance': min_stop_distance,
                 'request': request,
