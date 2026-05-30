@@ -1,69 +1,69 @@
 # Windows Deploy Playbook
 
-Ini versi singkat dan praktis. Fokusnya: **copy project, isi config, setup venv, jalankan dry-run, lalu live bila sudah yakin**.
+This is a short and practical version. The focus is: **copy the project, fill in the config, set up venv, run dry-run, then go live once confident**.
 
-## File yang kamu pakai langsung
+## Files You Use Directly
 
 - `runtime/paper_trade_config.windows.sample.json`
 - `windows_setup_venv.bat`
 - `windows_run_dry_loop.bat`
 - `windows_run_live_loop.bat`
-- `windows_run_m15_demo_loop.bat` (opsional, branch M15 terpisah)
-- `windows_run_session_basket_demo_loop.bat` (baru, basket session multi-symbol demo)
+- `windows_run_m15_demo_loop.bat` (optional, separate M15 branch)
+- `windows_run_session_basket_demo_loop.bat` (new, multi-symbol session basket demo)
 
-## Langkah super singkat
+## Ultra-Short Steps
 
-### 1. Copy folder project ke Windows RDP
-Misalnya ke:
+### 1. Copy Project Folder to Windows RDP
+For example, to:
 
 ```text
 C:\bots\xauusd_trading\
 ```
 
-### 2. Setup Python environment
-Buka Command Prompt di folder project, lalu jalankan:
+### 2. Set Up Python Environment
+Open Command Prompt in the project folder, then run:
 
 ```bat
 windows_setup_venv.bat
 ```
 
-### 3. Siapkan config real
+### 3. Prepare the Real Config
 Copy:
 
 ```text
 runtime\paper_trade_config.windows.sample.json
 ```
 
-menjadi:
+To:
 
 ```text
 runtime\paper_trade_config.json
 ```
 
-Lalu isi:
+Then fill in:
 - Telegram bot token
-- Telegram chat id
-- bila HTTPS Telegram error cert chain di Windows, set `telegram.insecure_ssl` ke `true`
+- Telegram chat ID
+- If Telegram HTTPS returns a cert chain error on Windows, set `telegram.insecure_ssl` to `true`
 - MT5 terminal path
 - MT5 login
 - MT5 password
 - MT5 server
-- symbol broker yang benar
+- Correct broker symbol
 
-### 4. Jalankan dry-run dulu
+### 4. Run Dry-run First
 
 ```bat
 windows_run_dry_loop.bat
 ```
 
-Tujuannya:
-- memastikan MT5 connect
-- memastikan symbol benar
-- memastikan bot bisa hitung signal
-- memastikan Telegram alert jalan
-- memastikan tidak ada traceback aneh
+The goal is to:
+- confirm MT5 connects
+- confirm the symbol is correct
+- confirm the bot can calculate signals
+- confirm Telegram alerts are working
+- confirm there are no unexpected tracebacks
 
-Kalau error Telegram berisi `CERTIFICATE_VERIFY_FAILED`, ubah config:
+If a Telegram error contains `CERTIFICATE_VERIFY_FAILED`, update the config:
 
 ```json
 "telegram": {
@@ -74,65 +74,65 @@ Kalau error Telegram berisi `CERTIFICATE_VERIFY_FAILED`, ubah config:
 }
 ```
 
-Secara default, execution runner sekarang hanya kirim alert untuk action penting seperti `OPEN`, `REVERSE`, `SYNC_SLTP`, atau `MANAGE_POSITION`. `HOLD/NO_SIGNAL` tidak dikirim agar tidak spam.
+By default, the execution runner now only sends alerts for important actions such as `OPEN`, `REVERSE`, `SYNC_SLTP`, or `MANAGE_POSITION`. `HOLD/NO_SIGNAL` are not sent to avoid spam.
 
-### Opsional: jalankan branch M15 demo terpisah
+### Optional: Run Separate M15 Demo Branch
 
-Kalau ingin menguji kandidat M15 terbaru tanpa mengganggu H1:
+If you want to test the latest M15 candidate without interfering with H1:
 
 1. Copy `runtime\paper_trade_config.m15.windows.sample.json`
-   menjadi `runtime\paper_trade_config.m15.json`
-2. Isi kredensial MT5/Telegram seperti biasa
-3. Jalankan:
+   to `runtime\paper_trade_config.m15.json`
+2. Fill in MT5/Telegram credentials as usual
+3. Run:
 
 ```bat
 windows_run_m15_demo_loop.bat
 ```
 
-Ini adalah **paper/demo loop M15** terpisah, bukan live execution.
+This is a **separate M15 paper/demo loop**, not live execution.
 
-### 5. Opsional: jalankan session basket demo loop (multi-symbol)
+### 5. Optional: Run Session Basket Demo Loop (Multi-Symbol)
 
-Kalau mau validasi portfolio session terbaru (EURUSD/GBPUSD/XAUUSD) dengan rule priority+risk tier:
+If you want to validate the latest portfolio session (EURUSD/GBPUSD/XAUUSD) with priority + risk tier rules:
 
 1. Copy `runtime\session_basket_demo_config.windows.sample.json`
-   menjadi `runtime\session_basket_demo_config.json`
-2. Isi simbol broker (`EURUSDm`, `GBPUSDm`, `XAUUSDm`) + kredensial
-3. Jalankan:
+   to `runtime\session_basket_demo_config.json`
+2. Fill in broker symbols (`EURUSDm`, `GBPUSDm`, `XAUUSDm`) + credentials
+3. Run:
 
 ```bat
 windows_run_session_basket_demo_loop.bat
 ```
 
-Referensi detail: `docs/session_basket_demo_runtime.md`
+Detailed reference: `docs/session_basket_demo_runtime.md`
 
-### 6. Kalau dry-run sehat, baru live
+### 6. Once Dry-run Is Healthy, Go Live
 
 ```bat
 windows_run_live_loop.bat
 ```
 
-Script ini sengaja kasih warning + pause dulu sebelum live send.
+This script intentionally shows a warning and pauses before live send.
 
-## Struktur file runtime yang akan terbentuk
+## Runtime File Structure That Will Be Created
 
 - `runtime\paper_trade_config.json`
 - `runtime\mt5_execution_state.json`
 - `runtime\*.jsonl`
 
-## Mode yang aku sarankan
+## Recommended Mode
 
-### Minggu awal
-- Jalankan **dry-run loop** dulu
-- lihat decision dan alert selama beberapa sesi market
-- pastikan bot tidak spam management action
+### First Few Weeks
+- Run the **dry-run loop** first
+- Observe decisions and alerts over several market sessions
+- Ensure the bot does not spam management actions
 
-### Setelah percaya diri
-- pindah ke **live loop**
-- tetap monitor Telegram dan log
+### Once Confident
+- Switch to **live loop**
+- Continue monitoring Telegram and logs
 
-## Catatan penting
+## Important Notes
 
-- Kalau symbol broker bukan `XAUUSD`, ganti di config, misalnya `XAUUSDm`
-- Jangan share `runtime\paper_trade_config.json`, karena isinya secret
-- Jangan hapus `runtime\mt5_execution_state.json` sembarangan saat bot live, karena itu bagian dari memory operasional bot
+- If your broker symbol is not `XAUUSD`, change it in the config, e.g. `XAUUSDm`
+- Do not share `runtime\paper_trade_config.json`, as it contains secrets
+- Do not delete `runtime\mt5_execution_state.json` carelessly while the bot is live, as it is part of the bot's operational memory
