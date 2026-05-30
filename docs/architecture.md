@@ -2,7 +2,7 @@
 
 ## 1. What the bot should look like, realistically
 
-Diagram yang kamu kirim bagus sebagai aspirasi, tapi untuk kondisi project sekarang versi yang realistis adalah ini:
+The diagram you sent is good as an aspiration, but for the current state of the project, the realistic version is this:
 
 ```text
 Market Data
@@ -28,51 +28,51 @@ Trade Log / Metrics / Feedback
 
 ## 2. Why this version is better for us now
 
-Karena saat ini kita belum ada alasan kuat untuk memusatkan sistem pada:
-- ML layer penuh
-- LLM layer inti
+Because currently we have no strong reason to centralize the system around:
+- a full ML layer
+- a core LLM layer
 
-Yang sudah terbukti penting justru:
+What has already proven important is:
 - valid data
-- feature yang konsisten
-- backtest yang fair
-- walk-forward yang fair
-- risk control yang tegas
-- execution yang aman
+- consistent features
+- fair backtesting
+- fair walk-forward
+- strict risk control
+- safe execution
 
 ## 3. Target module responsibilities
 
 ### Data layer
-Tugas:
+Responsibilities:
 - load CSV / broker feed
 - standardize schema
 - validate timestamp, duplicates, gaps, spread sanity
 - isolate symbol and timeframe specific quirks
 
-Jangan taruh:
+Should not contain:
 - signal logic
 - risk logic
 - order placement
 
 ### Feature pipeline
-Tugas:
+Responsibilities:
 - EMA, ATR, RSI, spread features
 - candle structure
 - volatility and session features
 - optional regime labels
 
-Jangan taruh:
+Should not contain:
 - SL/TP rules
 - broker logic
 
 ### Strategy engine
-Tugas:
+Responsibilities:
 - consume clean features
 - output setup / signal candidate
 - no broker side effects
 - no direct file IO if possible
 
-Output minimal:
+Minimal output:
 - side
 - entry condition
 - stop reference
@@ -80,7 +80,7 @@ Output minimal:
 - reason tags
 
 ### Risk engine
-Tugas:
+Responsibilities:
 - position sizing
 - max concurrent exposure
 - spread filter
@@ -88,10 +88,10 @@ Tugas:
 - daily loss guard
 - kill switch
 
-Ini harus menjadi gerbang keras sebelum execution.
+This must be a hard gate before execution.
 
 ### Execution adapter
-Tugas:
+Responsibilities:
 - paper trade or broker order submit
 - idempotent order actions
 - retry rules
@@ -99,7 +99,7 @@ Tugas:
 - persistent state and journal for runtime decisions
 
 ### Feedback / reporting
-Tugas:
+Responsibilities:
 - trade ledger
 - equity curve
 - per-strategy metrics
@@ -108,63 +108,63 @@ Tugas:
 
 ## 4. Implemented foundation, after cleanup
 
-Sekarang fondasi reusable awal sudah ada:
-- `data/loader.py` untuk load + validasi dasar data OHLCV
-- `features/indicators.py` untuk EMA, ATR, RSI, session features
-- `strategies/base.py` untuk interface strategy
-- `strategies/tf001.py` untuk proof-of-concept strategy implementation
-- `strategies/sr_sd_v35.py` untuk migrasi kandidat research kedua
-- `strategies/sr_sd_v35_short.py` untuk short mirror yang refined
-- `strategies/sr_ema_v41.py` untuk pembanding static S/R + EMA yang bias-prone
-- `backtesting/engine.py` untuk unified backtest engine minimal
-- `risk/manager.py` untuk sizing + drawdown / loss guards
-- `execution/paper.py` untuk paper-trade state/journal flow
-- `execution/portfolio.py` untuk candidate portfolio signal collection
-- `data/mt5.py` untuk MT5 data bridge dari terminal ke strategy engine
-- `reporting/metrics.py` untuk summary metrics
-- `reporting/ledger.py` untuk export trade ledger
-- `run_backtest.py` untuk single entry point backtest
-- `run_paper_trade.py` untuk paper-trade runner kandidat portfolio berbasis CSV
-- `run_paper_trade_mt5.py` untuk MT5-connected paper-trade runner
-- `run_paper_trade_mt5_loop.py` untuk MT5-connected periodic runtime
+The initial reusable foundation is now in place:
+- `data/loader.py` for basic OHLCV data loading + validation
+- `features/indicators.py` for EMA, ATR, RSI, session features
+- `strategies/base.py` for the strategy interface
+- `strategies/tf001.py` for proof-of-concept strategy implementation
+- `strategies/sr_sd_v35.py` for second research candidate migration
+- `strategies/sr_sd_v35_short.py` for refined short mirror
+- `strategies/sr_ema_v41.py` for bias-prone static S/R + EMA comparison
+- `backtesting/engine.py` for minimal unified backtest engine
+- `risk/manager.py` for sizing + drawdown / loss guards
+- `execution/paper.py` for paper-trade state/journal flow
+- `execution/portfolio.py` for candidate portfolio signal collection
+- `data/mt5.py` for MT5 data bridge from terminal to strategy engine
+- `reporting/metrics.py` for summary metrics
+- `reporting/ledger.py` for trade ledger export
+- `run_backtest.py` as single entry point for backtesting
+- `run_paper_trade.py` for CSV-based candidate portfolio paper-trade runner
+- `run_paper_trade_mt5.py` for MT5-connected paper-trade runner
+- `run_paper_trade_mt5_loop.py` for MT5-connected periodic runtime
 
-Artinya project tidak lagi cuma tumpukan script eksperimen. Sudah mulai punya core reusable.
+This means the project is no longer just a pile of experimental scripts. It now has a reusable core.
 
 ## 5. Where ML and LLM fit later
 
 ### ML, only if proven useful
-ML masuk setelah baseline strategy engine sudah rapi.
-Peran realistis:
+ML comes in after the baseline strategy engine is clean.
+Realistic roles:
 - regime classifier
 - probability calibration
 - trade quality scoring
 - feature importance study
 
-Bukan pengganti total seluruh logic dari awal.
+Not a total replacement of all logic from scratch.
 
 ### LLM, not core alpha
-LLM cocok nanti untuk:
+LLM is suitable later for:
 - operator summary
 - anomaly explanation
 - strategy comparison notes
 - natural language reporting
 - maybe regime commentary
 
-LLM tidak boleh jadi sumber utama entry/exit tanpa framework validasi yang sangat keras.
+LLM must not be the primary source of entry/exit without a very strict validation framework.
 
 ## 6. Suggested evolution path
 
 ### Stage 1, now
 **Research-first layered**
 
-- script riset masih ada
-- common logic mulai diekstrak
+- research scripts still exist
+- common logic is being extracted
 - no fake abstraction
 
 ### Stage 2, when repeated logic appears
 **Modular layered core**
 
-Tambahkan reusable module untuk:
+Add reusable modules for:
 - loaders
 - features
 - signals
@@ -174,16 +174,16 @@ Tambahkan reusable module untuk:
 ### Stage 3, before live trading
 **Operational architecture**
 
-Tambahkan:
-- risk service/module yang lebih kaya daripada guard dasar saat ini
+Add:
+- a richer risk service/module than the current basic guards
 - execution adapter
-- persistent trade log yang terhubung ke paper/live flow
+- persistent trade log connected to paper/live flow
 - alerting and kill switch
 
 ### Stage 4, only if justified
 **ML-assisted architecture**
 
-Tambahkan ML scoring/regime layer di atas feature pipeline, bukan di atas broker secara langsung.
+Add ML scoring/regime layer on top of the feature pipeline, not directly on top of the broker.
 
 ## 7. Current project mapping
 
