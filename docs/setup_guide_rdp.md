@@ -1,17 +1,17 @@
 # 🚀 Setup Guide — MT5 Demo & Live
 
-## STEP 1: Copy Project ke RDP
+## STEP 1: Copy Project to RDP
 
-Copy seluruh folder `xauusd_trading` ke RDP Windows, misalnya:
+Copy the entire `xauusd_trading` folder to your Windows RDP, for example:
 ```
 C:\Trading\xauusd_trading\
 ```
 
-## STEP 2: Install Python di RDP
+## STEP 2: Install Python on RDP
 
-- Download Python 3.11+ dari python.org
-- **PENTING:** Centang "Add Python to PATH" saat install
-- Buka CMD, verify: `python --version`
+- Download Python 3.11+ from python.org
+- **IMPORTANT:** Check "Add Python to PATH" during installation
+- Open CMD and verify: `python --version`
 
 ## STEP 3: Install Dependencies
 
@@ -23,60 +23,60 @@ pip install pandas numpy MetaTrader5
 ## STEP 4: Setup Config
 
 ### Demo Mode
-1. Copy config sample:
+1. Copy the config sample:
 ```cmd
 copy runtime\session_basket_demo_config.windows.sample.json runtime\session_basket_demo_config.json
 ```
 
-2. Edit `runtime\session_basket_demo_config.json`, isi:
+2. Edit `runtime\session_basket_demo_config.json` and fill in:
 ```json
 {
   "mt5": {
-    "login": AKUN_DEMO_ANDA,
-    "password": "PASSWORD_DEMO",
-    "server": "BROKER_SERVER_DEMO",
+    "login": YOUR_DEMO_ACCOUNT,
+    "password": "DEMO_PASSWORD",
+    "server": "DEMO_BROKER_SERVER",
     "terminal_path": "C:/Program Files/MetaTrader 5/terminal64.exe"
   },
   "telegram": {
-    "bot_token": "BOT_TOKEN_ANDA",
-    "chat_id": "CHAT_ID_ANDA"
+    "bot_token": "YOUR_BOT_TOKEN",
+    "chat_id": "YOUR_CHAT_ID"
   }
 }
 ```
 
 ### Live Mode
-1. Copy config sample:
+1. Copy the config sample:
 ```cmd
 copy runtime\session_basket_execution_config.windows.sample.json runtime\session_basket_execution_config.json
 ```
 
-2. Edit dengan akun **REAL** credentials
+2. Edit with your **REAL** account credentials
 
-## STEP 5: Jalankan MT5
+## STEP 5: Launch MT5
 
-- Buka MetaTrader 5
-- Login ke akun demo/real
-- **Biarkan MT5 tetap terbuka** — bot butuh MT5 running
+- Open MetaTrader 5
+- Log in to your demo/real account
+- **Keep MT5 open** — the bot requires MT5 to be running
 
-## STEP 6: Jalankan Bot
+## STEP 6: Run the Bot
 
-### Demo (Paper Trade — TIDAK kirim order)
+### Demo (Paper Trade — Does NOT send orders)
 ```cmd
 cd C:\Trading\xauusd_trading
 python run_session_basket_demo_mt5.py
 ```
 
-### Demo Loop (scan tiap 5 menit)
+### Demo Loop (scans every 5 minutes)
 ```cmd
 python run_session_basket_demo_mt5_loop.py
 ```
 
-Atau pakai BAT launcher:
+Or use the BAT launcher:
 ```cmd
 windows_run_session_basket_demo_loop.bat
 ```
 
-### Live Execution (KIRIM ORDER REAL)
+### Live Execution (SENDS REAL ORDERS)
 ```cmd
 python run_session_basket_execution_mt5.py --allow-live-send
 ```
@@ -90,17 +90,17 @@ python run_session_basket_execution_mt5_loop.py -- --allow-live-send
 
 ## ⚠️ SAFETY: Demo → Real Transition
 
-### Yang Perlu Di-ubah SAJA:
-1. **Config file** — Ganti credentials:
-   - `login` → akun real
-   - `password` → password real
-   - `server` → broker server real
-2. **Runner script** — Ganti dari demo ke execution runner:
+### What Needs to Be Changed ONLY:
+1. **Config file** — Replace credentials:
+   - `login` → real account
+   - `password` → real password
+   - `server` → real broker server
+2. **Runner script** — Switch from demo to execution runner:
    - Demo: `run_session_basket_demo_mt5_loop.py`
    - Live: `run_session_basket_execution_mt5_loop.py -- --allow-live-send`
 
-### Safety Guards yang Sudah Ada:
-- ✅ `--allow-live-send` flag — Bot **TIDAK** kirim order tanpa flag ini
+### Existing Safety Guards:
+- ✅ `--allow-live-send` flag — Bot does **NOT** send orders without this flag
 - ✅ Risk manager **ENFORCED** — max drawdown 20%, max 6 consecutive losses
 - ✅ Position size cap **10 lots**
 - ✅ Min risk distance **3 pips** (forex) / **50 pips** (gold)
@@ -108,23 +108,23 @@ python run_session_basket_execution_mt5_loop.py -- --allow-live-send
 - ✅ One position per symbol rule
 - ✅ Branch priority conflict resolution
 
-### ⛔ JANGAN LANGSUNG REAL!
-1. Jalankan **demo minimal 2-4 minggu** dulu
-2. Pastikan signal muncul dan paper trade profit konsisten
-3. Cek journal log: `runtime/session_basket_journals/`
-4. Habis itu baru pertimbangkan real dengan **micro lot** (0.01)
+### ⛔ DO NOT GO LIVE IMMEDIATELY!
+1. Run **demo for at least 2–4 weeks** first
+2. Ensure signals appear and paper trade shows consistent profit
+3. Check journal logs: `runtime/session_basket_journals/`
+4. Only then consider live trading with **micro lot** (0.01)
 
-### Checklist Sebelum Live:
-- [ ] Demo berjalan 2+ minggu tanpa error
-- [ ] Paper trade PnL positif atau breakeven
-- [ ] Risk per trade masih 0.3-0.5% (JANGAN naikkan!)
-- [ ] Telegram alerts aktif dan akurat
-- [ ] MT5 connection stabil (tidak disconnect)
-- [ ] Sudah test `--allow-live-send` dengan 0.01 lot dulu
+### Pre-Live Checklist:
+- [ ] Demo running 2+ weeks without errors
+- [ ] Paper trade PnL positive or breakeven
+- [ ] Risk per trade still at 0.3–0.5% (DO NOT increase!)
+- [ ] Telegram alerts active and accurate
+- [ ] MT5 connection stable (no disconnections)
+- [ ] Already tested `--allow-live-send` with 0.01 lot first
 
 ---
 
-## Branch Aktif (Tuned)
+## Active Branches (Tuned)
 
 | Branch | Pair | Risk | Status |
 |--------|------|------|--------|
